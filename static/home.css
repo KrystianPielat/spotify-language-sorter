@@ -1,0 +1,74 @@
+body {
+    background-color: rgb(19, 18, 18)
+}
+
+.general-grid {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-rows: 10rem auto;
+    grid-template-areas: 
+            "presentation"
+            "start-button";
+}
+
+.presentation {
+    grid-area: presentation;
+    display: flex;
+    justify-content: center;
+}
+
+h1 {
+    text-align: left;
+    color: #1DB954;
+    grid-area: letters;
+    font-size: 3rem;
+    /* padding-left: 0.5rem; */
+    margin-top: 0.6rem;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+img {
+    width: 6rem;
+    max-height: 6rem;
+    grid-area: pic;
+    margin-top: 1rem;
+}
+
+button {
+    background-color: #1DB954;
+    border: none;
+    padding: 20px 30px;
+    border-radius: 6px;
+}
+
+.button:hover {
+    background-color: #0f642d; /* Green */
+    color: white;
+    cursor: pointer;
+    box-shadow: 0 12px 16px 0 rgba(0, 0, 0, 0.24), 0 17px 50px 0 rgba(0, 0, 0, 0.19);
+
+  }
+
+.start-button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    grid-area: start-button;
+    place-self: center;
+    align-self: center;
+    justify-self: center;
+}
+
+.start-button p{
+    color: antiquewhite;
+    font-size: 20px;
+}
+
+
+.main {
+    text-align: center;
+    padding-top: 40vh;
+}

@@ -1,0 +1,12 @@
+services:
+  app:
+    container_name: spotify_container
+    build: .
+    restart: always
+    volumes:
+      - .:/spotify
+    ports:
+      - "5000:5000"
+    command: python spotify.py
+    env_file:
+      - vars.env

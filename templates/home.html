@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='home.css')}}">
+    <title>Spotify Sorter</title>
+</head>
+<body>
+    <section class="general-grid">
+        <div class="presentation">
+            <!-- <img src="{{url_for('static', filename='file-spotify-logo-png-4.png')}}" alt=""> -->
+            <h1> Spotify Song Sorter </h1>
+        </div>
+        <div class="start-button">
+            <p> Want to sort your music?  </p>
+            <button class="button" onclick=get_button_address()>
+                CLICK HERE
+            </button>
+        </div>
+    </section>
+    <!-- <a href="/start">click to sort</a> -->
+
+    
+
+    <script>
+        function get_button_address(){
+            return window.location.href='{{url_for("start")}}'
+        }
+    </script>
+</body>
+</html>
+

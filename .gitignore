@@ -1,0 +1,5 @@
+spotify_venv
+vars.env
+
+__pycache__/
+spotify_deploy.py
