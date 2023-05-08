@@ -2,6 +2,8 @@
 import base64
 import json
 import math
+import sys
+import logging
 from urllib.parse import urlencode
 from threading import Thread
 import os
@@ -57,6 +59,16 @@ class SpotifyHandler:
         self.secret_key = secret_key
         self.token = ""
         self.api_headers = {}
+        self.logger = logging.getLogger("SpotifyHandlerLogger")
+        self.logger.setLevel(logging.DEBUG)
+
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter(
+            "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
+        )
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     def authorize(self, code):
         """authorizes app to connect to spotify account"""
@@ -64,18 +76,22 @@ class SpotifyHandler:
             self.client_id.encode() + ":".encode() + self.secret_key.encode()
         ).decode()
 
-        response = requests.post(
-            url="https://accounts.spotify.com/api/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": URI,
-            },
-            headers={"Authorization": "Basic " + encoded_credentials},
-            timeout=10,
-        )
+        try:
+            response = requests.post(
+                url="https://accounts.spotify.com/api/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": URI,
+                },
+                headers={"Authorization": "Basic " + encoded_credentials},
+                timeout=10,
+            )
 
-        self.token = response.json()["access_token"]
+            self.token = response.json()["access_token"]
+        except Exception as e:
+            self.logger.exception("Failed to obtain token. Message: " + str(e))
+            return None
 
         self.api_headers = {"Authorization": "Bearer " + self.token}
 
@@ -83,14 +99,44 @@ class SpotifyHandler:
         return self.token
 
     # pylint: disable=R0913
-    def make_call(self, method, endpoint, headers=None, data=None, params=None):
+    def make_call(
+        self, method, endpoint, headers=None, data=None, params=None
+    ):
         """actual api calls"""
         if not headers:
             headers = self.api_headers
 
-        response = getattr(requests, method)(
-            BASE_URL + endpoint, headers=headers, params=params, data=data
-        )
+        try:
+            response = getattr(requests, method)(
+                BASE_URL + endpoint, headers=headers, params=params, data=data
+            )
+        except Exception as e:
+            self.logger.exception(
+                f"""
+            Failed to execute an API request.
+            Method: {method}
+            Endpoint: {endpoint}
+            Headers: {headers}
+            Body: {data}
+            Query Params: {params}
+
+            Message: {str(e)}
+            """
+            )
+
+        if response.status_code != 200:
+            self.logger.info(
+                f"""
+            Failed to execute an API request.
+            Method: {method}
+            Endpoint: {endpoint}
+            Headers: {headers}
+            Body: {data}
+            Query Params: {params}
+
+            Message: {response.content}
+            """
+            )
 
         return response.json()
 
@@ -103,15 +149,29 @@ class SpotifyHandler:
         total = self.make_call("get", endpoint, headers, data, params)["total"]
 
         for page in range(round(total / 50) or 1):
-            items.extend(
-                self.make_call(
-                    "get",
-                    endpoint,
-                    headers,
-                    data,
-                    params={"offset": page * 50, "limit": 50},
-                )["items"]
-            )
+            try:
+                items.extend(
+                    self.make_call(
+                        "get",
+                        endpoint,
+                        headers,
+                        data,
+                        params={"offset": page * 50, "limit": 50},
+                    )["items"]
+                )
+            except Exception as e:
+                self.logger.exception(
+                    f"""
+                Failed to execute an API pagination get_resource request.
+                Endpoint: {endpoint}
+                Headers: {headers}
+                Body: {data}
+                Query Params: {params}
+                Page Number: {page}
+
+                Message: {str(e)}
+                """
+                )
 
         return items
 
@@ -145,9 +205,12 @@ class SpotifyHandler:
 
         for track in tracks:
             try:
-                track.lan = track.lan.result().json()["response"]["hits"][0]["result"][
-                    "language"
-                ]
+                track.lan = track.lan.result().json()["response"]["hits"][0][
+                    "result"
+                ]["language"]
+
+                if track.lan is None:
+                    track.lan = "unidentified"
             except (KeyError, IndexError):
                 track.lan = "unidentified"
 
@@ -157,15 +220,22 @@ class SpotifyHandler:
         """creates playlist objects with name and id"""
         return [
             Playlist(playlist["name"], playlist["id"])
-            for playlist in self.get_resource(f"users/{self.user_id}/playlists")
+            for playlist in self.get_resource(
+                f"users/{self.user_id}/playlists"
+            )
         ]
 
     def empty_playlist(self, playlist_id):
-        """empty playlists for already existing languages"""
+        """empties chosen playlist"""
 
         for _ in range(
             math.ceil(
-                (self.make_call("get", f"playlists/{playlist_id}/tracks")["total"] / 50)
+                (
+                    self.make_call("get", f"playlists/{playlist_id}/tracks")[
+                        "total"
+                    ]
+                    / 50
+                )
             )
         ):
             self.make_call(
@@ -186,7 +256,7 @@ class SpotifyHandler:
             )
 
     def update_playlist(self, playlist_id, songs):
-        """repopulates already existing playlists"""
+        """Adds songs to the playlist"""
         for i in range(math.ceil(len(songs) / 90)):
             self.make_call(
                 "post",
@@ -194,36 +264,44 @@ class SpotifyHandler:
                 data=json.dumps({"uris": songs[i * 90 : i * 90 + 90]}),
             )
 
-    def create_playlist(self, lans, songs):
-        """creates playlist and adds songs to it"""
+    def create_playlist(self, name, songs):
+        """Creates a playlist and adds songs to it"""
         playlist_id = self.make_call(
             "post",
             f"users/{self.user_id}/playlists",
-            data=json.dumps({"name": lans, "public": False}),
+            data=json.dumps({"name": name, "public": False}),
         ).get("id")
 
         if not playlist_id:
-            print(f"Error adding playlist for language {lans}")
+            self.logger.exception(
+                f"Failed to create a playlist named {name}, skipping.."
+            )
             return False
 
         for i in range(math.ceil(len(songs) / 90)):
             uris = {"uris": songs[i * 90 : (i + 1) * 90], "position": i * 90}
-            self.make_call(
-                "post",
-                f"playlists/{playlist_id}/tracks",
-                headers=self.api_headers,
-                data=json.dumps(uris),
-            )
-
+            if (
+                self.make_call(
+                    "post",
+                    f"playlists/{playlist_id}/tracks",
+                    headers=self.api_headers,
+                    data=json.dumps(uris),
+                ).status_code
+                != 200
+            ):
+                self.logger.exception(
+                    f"Failed to add songs to playlist {name}"
+                )
+                return False
         return True
 
 
 @app.route("/")
 def home():
     return render_template("home.html")
-    # return redirect("/start")
 
 
+# Endpoint that redirects to spotify login page
 @app.route("/start")
 def start():
     return redirect(
@@ -243,40 +321,63 @@ def start():
 code = None
 
 
+# Endpoint catching spotify's redirection and parses the code from the url
 @app.route("/code")
 def get_code():
     global code
     code = request.args.get("code")
+    if not code:
+        return "<h1>Failed to obtain code from Spotify API.</h1>"
     return redirect(url_for("main_func"))
 
 
-def process():
-    handler = SpotifyHandler(CLIENT_ID, SECRET_KEY)
-    if not code:
-        return "<h1>No code found</h1>"
-    handler.authorize(code)
-    all_songs = handler.get_songs_and_lan()
-    lan_and_songs = {lan: [] for lan in set(song.lan for song in all_songs)}
-
-    for song in all_songs:
-        lan_and_songs[song.lan].append(song.uri)
-
-    playlists = handler.get_playlists()
-    playlist_names = {playlist.name: playlist.playlist_id for playlist in playlists}
-
-    for lan in lan_and_songs.keys():
-        if lan in playlist_names.keys():
-            handler.empty_playlist(playlist_names[lan])
-            handler.update_playlist(playlist_names[lan], lan_and_songs[lan])
-        else:
-            handler.create_playlist(lan, lan_and_songs[lan])
-
-
+# Starts background thread and shows goodbye page
 @app.route("/main")
 def main_func():
     Thread(target=process).start()
 
     return render_template("return.html")
+
+
+def process():
+    handler = SpotifyHandler(CLIENT_ID, SECRET_KEY)
+
+    handler.logger.info("Process started")
+
+    # If token not obtained, return
+    if not handler.authorize(code):
+        return False
+
+    handler.logger.info("Authorized correctly")
+    # Get all songs from user's favourites
+    all_songs = handler.get_songs_and_lan()
+
+
+    handler.logger.info("Collecting users's songs and playlists")
+    # Create dict with language: [songs]
+    lan_songs_dict = {lan: [] for lan in set(song.lan for song in all_songs)}
+    for song in all_songs:
+        lan_songs_dict[song.lan].append(song.uri)
+
+    # Get all user's playlists
+    playlists = handler.get_playlists()
+    # Create dict playlist_name: playlist_id
+    playlist_names = {
+        playlist.name: playlist.playlist_id for playlist in playlists
+    }
+
+    handler.logger.info("Creating and populating playlists...")
+    for lan in lan_songs_dict.keys():
+        if lan in playlist_names.keys():
+            # If playlist for that language exists, empty it
+            handler.empty_playlist(playlist_names[lan])
+            # Add songs to that empty playlist
+            handler.update_playlist(playlist_names[lan], lan_songs_dict[lan])
+        else:
+            # Create a new playlist and add the songs
+            handler.create_playlist(lan, lan_songs_dict[lan])
+
+    handler.logger.info("Process finished")
 
 
 if __name__ == "__main__":
